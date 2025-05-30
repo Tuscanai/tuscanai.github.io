@@ -1,224 +1,148 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Conversation Viewer with CSV Upload</title>
-<style>
-  body {
-    font-family: Arial, sans-serif;
-    background: #f7f9fc;
-    margin: 0;
-    padding: 20px;
-  }
-  h1 {
-    margin-bottom: 10px;
-  }
-  #upload-label {
-    display: inline-block;
-    padding: 10px 15px;
-    background-color: #007bff;
-    color: white;
-    border-radius: 6px;
-    cursor: pointer;
-    margin-bottom: 20px;
-  }
-  #upload-label:hover {
-    background-color: #0056b3;
-  }
-  #file-input {
-    display: none;
-  }
-  .conversation {
-    background: white;
-    border-radius: 8px;
-    box-shadow: 0 1px 5px rgba(0,0,0,0.1);
-    margin-bottom: 30px;
-    padding: 15px;
-    max-width: 700px;
-  }
-  .conversation-id {
-    font-weight: bold;
-    margin-bottom: 10px;
-    color: #333;
-  }
-  .message {
-    margin-bottom: 10px;
-    padding: 8px 12px;
-    border-radius: 15px;
-    max-width: 75%;
-    line-height: 1.4;
-    white-space: pre-wrap;
-  }
-  .user {
-    background: #cce5ff;
-    color: #004085;
-    align-self: flex-start;
-  }
-  .llm {
-    background: #d4edda;
-    color: #155724;
-    align-self: flex-end;
-  }
-  .messages {
-    display: flex;
-    flex-direction: column;
-  }
-  #conversations-container {
-    margin-top: 20px;
-  }
-  #error-message {
-    color: red;
-    font-weight: bold;
-  }
-</style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Client Session Reports Viewer</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f6f8;
+      margin: 0;
+      padding: 20px;
+    }
+    .container {
+      max-width: 1000px;
+      margin: auto;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    input[type="file"] {
+      display: block;
+      margin: 0 auto 30px auto;
+    }
+    .session {
+      background-color: #fff;
+      padding: 20px;
+      margin-bottom: 25px;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+    }
+    .session h2 {
+      margin-top: 0;
+      font-size: 20px;
+      color: #333;
+    }
+    .report-item {
+      margin: 10px 0;
+    }
+    .label {
+      font-weight: bold;
+      color: #444;
+    }
+    .value {
+      color: #222;
+    }
+    .toggle-btn {
+      margin-top: 10px;
+      padding: 8px 16px;
+      background-color: #0078D4;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .conversation {
+      display: none;
+      margin-top: 15px;
+      padding: 15px;
+      background-color: #f9f9f9;
+      border-left: 4px solid #0078D4;
+    }
+    .message {
+      margin-bottom: 10px;
+    }
+    .user-msg {
+      color: #000;
+      font-weight: bold;
+    }
+    .llm-msg {
+      color: #333;
+      margin-left: 15px;
+    }
+  </style>
 </head>
 <body>
+  <div class="container">
+    <h1>Client Session Reports</h1>
+    <input type="file" id="fileInput" accept=".json" />
+    <div id="output"></div>
+  </div>
 
-<h1>Conversation Viewer</h1>
-<label id="upload-label" for="file-input">Upload CSV File</label>
-<input type="file" id="file-input" accept=".csv" />
+  <script>
+    document.getElementById("fileInput").addEventListener("change", function (event) {
+      const file = event.target.files[0];
+      if (!file) return;
 
-<div id="error-message"></div>
-<div id="conversations-container"></div>
-
-<script>
-function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/).filter(Boolean);
-  const header = lines.shift().split(',');
-
-  if (header.length < 2 || header[0].trim() !== 'id' || header[1].trim() !== 'conversation') {
-    throw new Error('CSV header must be: id,conversation');
-  }
-
-  return lines.map(line => {
-    // Split only on first comma, because conversation may contain commas
-    const firstComma = line.indexOf(',');
-    const id = line.slice(0, firstComma).trim();
-    let conversation = line.slice(firstComma + 1).trim();
-
-    // Remove wrapping quotes if any (usually double quotes)
-    if ((conversation.startsWith('"') && conversation.endsWith('"')) || (conversation.startsWith("'") && conversation.endsWith("'"))) {
-      conversation = conversation.slice(1, -1);
-      // Replace double double-quotes to one double quote (CSV escape)
-      conversation = conversation.replace(/""/g, '"');
-    }
-
-    return { id, conversation };
-  });
-}
-
-// Safer parser for Python-like list of dicts string
-function parseConversationString(str) {
-  try {
-    // Fix common issues:
-    // 1. Replace all single quotes around keys and values with double quotes
-    // 2. Handle escaped double quotes inside strings
-
-    // Step 1: Replace single quotes ONLY around keys and string values
-    // This regex attempts to match keys and string values wrapped in single quotes
-    // Warning: regex parsing for JSON-like strings can fail on complex nested strings
-
-    let fixed = str;
-
-    // Replace single quotes around keys: {'key': to {"key":
-    fixed = fixed.replace(/([{,]\s*)'([^']+?)'\s*:/g, '$1"$2":');
-
-    // Replace single quotes around string values: : 'value'
-    // We avoid replacing single quotes inside sentences by assuming no nested quotes inside values
-    fixed = fixed.replace(/:\s*'([^']*?)'/g, ': "$1"');
-
-    // Remove trailing commas before closing braces/brackets
-    fixed = fixed.replace(/,(\s*[}\]])/g, '$1');
-
-    // Now parse using Function constructor to get object
-    // Wrap in parentheses so JS treats it as expression, not block
-    const obj = (new Function('return ' + fixed))();
-
-    return obj;
-  } catch (err) {
-    console.error("Parsing conversation failed:", err);
-    return [];
-  }
-}
-
-function clearOutput() {
-  document.getElementById('conversations-container').innerHTML = '';
-  document.getElementById('error-message').textContent = '';
-}
-
-function renderConversations(mergedConversations) {
-  clearOutput();
-  const container = document.getElementById("conversations-container");
-
-  for (const [id, conv] of Object.entries(mergedConversations)) {
-    const convDiv = document.createElement("div");
-    convDiv.className = "conversation";
-
-    const idDiv = document.createElement("div");
-    idDiv.className = "conversation-id";
-    idDiv.textContent = `Conversation ID: ${id}`;
-    convDiv.appendChild(idDiv);
-
-    const messagesDiv = document.createElement("div");
-    messagesDiv.className = "messages";
-
-    for (const msg of conv) {
-      if (!msg.user || !msg.llm) continue;
-
-      const userMsg = document.createElement("div");
-      userMsg.className = "message user";
-      userMsg.textContent = msg.user;
-
-      const llmMsg = document.createElement("div");
-      llmMsg.className = "message llm";
-      llmMsg.textContent = msg.llm.trim();
-
-      messagesDiv.appendChild(userMsg);
-      messagesDiv.appendChild(llmMsg);
-    }
-
-    convDiv.appendChild(messagesDiv);
-    container.appendChild(convDiv);
-  }
-}
-
-document.getElementById('file-input').addEventListener('change', function(event) {
-  const file = event.target.files[0];
-  clearOutput();
-
-  if (!file) return;
-
-  const reader = new FileReader();
-
-  reader.onload = function(e) {
-    try {
-      const text = e.target.result;
-      const rows = parseCSV(text);
-
-      const mergedConversations = {};
-      for (const entry of rows) {
-        if (!mergedConversations[entry.id]) {
-          mergedConversations[entry.id] = [];
+      const reader = new FileReader();
+      reader.onload = function (e) {
+        const content = e.target.result;
+        try {
+          const data = JSON.parse(content);
+          renderReports(data);
+        } catch (err) {
+          alert("Invalid JSON file.");
         }
-        const parsed = parseConversationString(entry.conversation);
-        mergedConversations[entry.id].push(...parsed);
-      }
+      };
+      reader.readAsText(file);
+    });
 
-      renderConversations(mergedConversations);
+    function renderReports(jsonData) {
+      const container = document.getElementById("output");
+      container.innerHTML = ""; // Clear previous results
 
-    } catch (err) {
-      document.getElementById('error-message').textContent = 'Error parsing CSV: ' + err.message;
+      Object.entries(jsonData).forEach(([sessionId, sessionData], index) => {
+        const report = sessionData.report || {};
+        const conversation = sessionData.conversation || [];
+
+        const div = document.createElement("div");
+        div.className = "session";
+
+        div.innerHTML = `
+          <h2>Session ID: ${sessionId}</h2>
+          <div class="report-item"><span class="label">Name:</span> <span class="value">${report.name || "None"}</span></div>
+          <div class="report-item"><span class="label">Phone Number:</span> <span class="value">${report.phone_number || "None"}</span></div>
+          <div class="report-item"><span class="label">Deadline:</span> <span class="value">${report.deadline || "None"}</span></div>
+          <div class="report-item"><span class="label">Summary:</span>
+            <p class="value">${report.summary || "No summary available."}</p>
+          </div>
+          <button class="toggle-btn" data-target="convo${index}">📂 See Full Conversation</button>
+          <div class="conversation" id="convo${index}">
+            ${conversation.map(entry => `
+              <div class="message"><span class="user-msg">User:</span> ${entry.user}</div>
+              <div class="message"><span class="llm-msg">LLM:</span> ${entry.llm}</div>
+            `).join('')}
+          </div>
+        `;
+
+        container.appendChild(div);
+      });
+
+      document.querySelectorAll(".toggle-btn").forEach(button => {
+        button.addEventListener("click", () => {
+          const convo = document.getElementById(button.dataset.target);
+          if (convo.style.display === "block") {
+            convo.style.display = "none";
+            button.textContent = "📂 See Full Conversation";
+          } else {
+            convo.style.display = "block";
+            button.textContent = "📁 Hide Conversation";
+          }
+        });
+      });
     }
-  };
-
-  reader.onerror = function() {
-    document.getElementById('error-message').textContent = 'Failed to read file';
-  };
-
-  reader.readAsText(file);
-});
-</script>
-
+  </script>
 </body>
 </html>
